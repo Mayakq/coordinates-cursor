@@ -1,57 +1,65 @@
-use std::{mem, thread};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, DispatchMessageA, GetMessageA, HHOOK, MOUSEHOOKSTRUCT, MSG, SetWindowsHookExA, TranslateMessage, UnhookWindowsHookEx, WH_MOUSE_LL};
-
+use crate::hooks::mouse_move::hook_set::Hook;
+use lazy_static::lazy_static;
+use std::{ thread::{self, JoinHandle}};
+use windows::Win32::{Foundation::{HWND, LPARAM}, UI::WindowsAndMessaging::HHOOK};
 mod hooks;
-
-
-struct Hook {
-    hhook: HHOOK,
+use eframe::egui::{self, mutex::RwLock, RichText};
+struct MousePosition {
+    x: u16,
+    y: u16,
 }
-
-impl Hook {
-    unsafe fn message_loop() {
-        let mut message: MSG = mem::zeroed();
-        while GetMessageA(&mut message, HWND::default(), 0, 0).into() {
-            let _ = TranslateMessage(&message);
-            DispatchMessageA(&message);
-        }
-    }
-    unsafe fn mouse_logger(_lparam: LPARAM) -> Hook {
-        let hhook = SetWindowsHookExA(
-            WH_MOUSE_LL,
-            Some(Hook::mouse_event),
-            None,
-            0,
-        ).unwrap();
-        return Hook {
-            hhook,
-        };
-    }
-    unsafe fn get_messages() {
-        Hook::message_loop();
-    }
-    unsafe fn unregister(hhook: HHOOK) -> bool {
-        if UnhookWindowsHookEx(hhook).is_ok() {
-            return true;
-        };
-        return false;
-    }
-    unsafe extern "system" fn mouse_event(code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
-        let _key_info: MOUSEHOOKSTRUCT = *(l_param.0 as *const MOUSEHOOKSTRUCT);
-        if w_param.0 == 0x200 {}
-        return CallNextHookEx(HHOOK::default(), code, w_param, l_param);
+impl Default for MousePosition {
+    fn default() -> Self {
+        MousePosition { x: 0, y: 0 }
     }
 }
+lazy_static! {
+    static ref Points: RwLock<MousePosition> = RwLock::new(MousePosition::default());
+}
 
+fn start_hook_thread() -> JoinHandle<()> {
+    return thread::spawn(|| unsafe {
+        let mut hook: Hook = Hook::default();
+        let _hhok = Hook::create_hook(&mut hook, LPARAM::default());
+        Hook::get_messages(&mut hook, HWND::default(), 0, 0);
+    });
+}
 
 fn main() {
-    let hhok = unsafe { Hook::mouse_logger(LPARAM::default()) };
-    let a = thread::spawn(|| unsafe {
-        Hook::message_loop();
-    });
-    a.join().unwrap();
+    start_hook_thread();
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([200.0, 100.0]).with_resizable(false).with_taskbar(false).with_title_shown(false),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "TS",
+        options,
+        Box::new(|_cc| {
+            return Ok(Box::<MyApp>::default());
+        }),
+    )
+    .unwrap();
 }
 
+struct MyApp {}
 
-
+impl Default for MyApp {
+    fn default() -> Self {
+        Self {}
+    }
+}
+impl eframe::App for MyApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                let point_x = format!("Point x: {}", Points.read().x);
+                let point_y = format!("Point y: {}", Points.read().y);
+                ui.label(RichText::new(point_x));
+                ui.label(RichText::new(point_y));
+            });
+        });
+    }
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        std::process::exit(0); // todo normalize unregister hook
+    }
+}

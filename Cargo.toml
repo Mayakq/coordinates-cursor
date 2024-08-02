@@ -11,3 +11,5 @@ features = [
     "Win32_System_LibraryLoader",
 ]
 [dependencies]
+eframe = { version = "0.28.1", features = ["default"] }
+lazy_static = { version = "1.5.0"}
